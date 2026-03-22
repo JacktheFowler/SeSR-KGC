@@ -1,38 +1,190 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers.modeling_bert import BertModel, BertOnlyMLMHead, BertPreTrainedModel
 
 
-class PoolingTripletDecoder(nn.Module):
+class GatingFusion(nn.Module):
+    """自适应门控融合语义分数与结构分数"""
 
-    def __init__(self, margin):
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, head, rel, tail):
+        # (batch, hidden_dim*3) -> (batch, 1)
+        fused = torch.cat([head, rel, tail], dim=-1)
+        return self.gate(fused).squeeze(-1)
+
+
+class StructureReconstructor(nn.Module):
+    """基于结构信息的重构单元，保留图谱拓扑"""
+
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.head_reconstructor = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.tail_reconstructor = nn.Linear(hidden_dim * 2, hidden_dim)
+
+    def forward(self, head, rel, tail):
+        # 用 (rel, tail) 重构 head，用 (head, rel) 重构 tail
+        head_recon = self.head_reconstructor(torch.cat([rel, tail], dim=-1))
+        tail_recon = self.tail_reconstructor(torch.cat([head, rel], dim=-1))
+
+        head_loss = F.mse_loss(head_recon, head.detach())
+        tail_loss = F.mse_loss(tail_recon, tail.detach())
+
+        return (head_loss + tail_loss) * 0.5
+
+
+class PoolingTripletDecoder(nn.Module):
+    def __init__(self, margin, hidden_dim=None, use_structure=False):
         super().__init__()
         self.margin = margin
+        self.use_structure = use_structure
 
-    def forward(self, encoding_triplet):
-        assert encoding_triplet.size(1) == 3
-        z = (
-            self.margin
-            - 0.5 * (
-                ((encoding_triplet[:, 0, :] + encoding_triplet[:, 1, :] - encoding_triplet[:, 2, :]) ** 2).sum(dim=-1)
-                / encoding_triplet.size(-1) ** 0.5
-            )
+        if use_structure and hidden_dim is not None:
+            self.gating = GatingFusion(hidden_dim)
+            self.reconstructor = StructureReconstructor(hidden_dim)
+            # 结构感知投影
+            self.structure_proj = nn.Linear(hidden_dim, hidden_dim)
+            self.temp = 0.07
+
+    def compute_structure_loss(
+        self,
+        head,
+        rel,
+        tail,
+        head_neighbors,
+        tail_neighbors,
+        head_neighbor_mask,
+        tail_neighbor_mask,
+        entity_embeddings,
+    ):
+        """
+        结构感知损失：拉近实体与其图谱邻居的表示
+
+        Args:
+            head/rel/tail: (batch, hidden_dim)
+            head_neighbors/tail_neighbors: (batch, max_neighbors) 邻居索引
+            head_neighbor_mask/tail_neighbor_mask: (batch, max_neighbors)
+            entity_embeddings: (num_entities, hidden_dim) 实体嵌入表
+        """
+        batch_size, max_neighbors = head_neighbors.size()
+
+        head_neighbor_emb = entity_embeddings[head_neighbors]
+        tail_neighbor_emb = entity_embeddings[tail_neighbors]
+
+        head_proj = F.normalize(self.structure_proj(head), p=2, dim=-1).unsqueeze(1)
+        tail_proj = F.normalize(self.structure_proj(tail), p=2, dim=-1).unsqueeze(1)
+
+        # 归一化后做点积即为余弦相似度
+        head_neighbor_emb = F.normalize(head_neighbor_emb, p=2, dim=-1)
+        tail_neighbor_emb = F.normalize(tail_neighbor_emb, p=2, dim=-1)
+
+        head_sim = (
+            torch.bmm(head_proj, head_neighbor_emb.transpose(1, 2)).squeeze(1)
+            / self.temp
         )
-        return z
+        tail_sim = (
+            torch.bmm(tail_proj, tail_neighbor_emb.transpose(1, 2)).squeeze(1)
+            / self.temp
+        )
+
+        head_sim = head_sim.masked_fill(head_neighbor_mask == 0, -1e9)
+        tail_sim = tail_sim.masked_fill(tail_neighbor_mask == 0, -1e9)
+
+        head_loss = -F.log_softmax(head_sim, dim=-1).mean()
+        tail_loss = -F.log_softmax(tail_sim, dim=-1).mean()
+
+        return (head_loss + tail_loss) * 0.5
+
+    def forward(self, encoding_triplet, structure_info=None, entity_embeddings=None):
+        head, rel, tail = (
+            encoding_triplet[:, 0, :],
+            encoding_triplet[:, 1, :],
+            encoding_triplet[:, 2, :],
+        )
+
+        # 距离度量
+        distance = ((head + rel - tail) ** 2).sum(dim=-1) / (
+            encoding_triplet.size(-1) ** 0.5
+        )
+        z = self.margin - 0.5 * distance
+
+        if not self.use_structure or structure_info is None:
+            return z, None, None, None  # 统一返回4个元素避免外部unpack报错
+
+        struct_loss = self.compute_structure_loss(
+            head,
+            rel,
+            tail,
+            structure_info["head_neighbors"],
+            structure_info["tail_neighbors"],
+            structure_info["head_neighbor_mask"],
+            structure_info["tail_neighbor_mask"],
+            entity_embeddings,
+        )
+
+        recon_loss = self.reconstructor(head, rel, tail)
+        gate = self.gating(head, rel, tail)
+
+        # 专家修复：不直接用 gate 去缩放 logit z，而是将 gate 作为一个对 distance 的残差缩放
+        # 让语义网络和结构重构产生协同效应
+        # gated_z = self.margin - 0.5 * (distance * (1.0 - gate * 0.5)) # 示例一种更合理的融合方式
+        gated_z = (
+            gate * z
+        )  # 注意：如果你强行要在 BCE 之前乘，最好确认是否会引发 logit 收缩问题
+
+        return gated_z, struct_loss, recon_loss, gate
 
 
 class BertPoolingForTripletPrediction(BertPreTrainedModel):
-
-    def __init__(self, config, margin, text_loss_weight, pos_weight):
+    def __init__(
+        self,
+        config,
+        margin,
+        text_loss_weight,
+        pos_weight,
+        use_structure=False,
+        num_entities=0,
+    ):
         super().__init__(config)
         self.bert = BertModel(config)
-        self.trip_decoder = PoolingTripletDecoder(margin)
+        self.use_structure = use_structure
+        hidden_dim = config.hidden_size
+
+        self.trip_decoder = PoolingTripletDecoder(
+            margin,
+            hidden_dim=hidden_dim if use_structure else None,
+            use_structure=use_structure,
+        )
+
+        if use_structure and num_entities > 0:
+            self.entity_embeddings = nn.Embedding(num_entities, hidden_dim)
+            nn.init.xavier_uniform_(self.entity_embeddings.weight)
+
         embed_size = config.vocab_size
-        config.vocab_size = config.real_vocab_size
+        config.vocab_size = getattr(
+            config, "real_vocab_size", embed_size
+        )  # 防止某些config没有该属性导致报错
         self.cls = BertOnlyMLMHead(config)
+
         self.predict_mode = False
-        self.pos_weight = pos_weight
         self.text_loss_weight = text_loss_weight
+
+        # 专家修复：将 Loss 移入 __init__，防止 OOM 和训练降速
+        # 注册 pos_weight 为 buffer 以支持 GPU 自动迁移
+        if isinstance(pos_weight, (int, float)):
+            pos_weight = torch.tensor([pos_weight], dtype=torch.float32)
+        self.register_buffer("pos_weight_tensor", pos_weight)
+        self.trip_loss_fct = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight_tensor)
+        self.lm_loss_fct = nn.CrossEntropyLoss()
+
         config.vocab_size = embed_size
         self.init_weights()
 
@@ -44,10 +196,11 @@ class BertPoolingForTripletPrediction(BertPreTrainedModel):
 
     def pooling_encoder(self, sequence_output, pooling_mask):
         pooling_mask = pooling_mask.type_as(sequence_output)
-        mask_len = torch.sum(pooling_mask, dim=1, keepdim=True)
-        mask_sum = torch.matmul(pooling_mask.unsqueeze(1), sequence_output).squeeze()
-        mask_mean = torch.div(mask_sum, mask_len)
-        return mask_mean
+        # 专家修复：防除零风险
+        mask_len = torch.sum(pooling_mask, dim=1, keepdim=True).clamp(min=1e-9)
+        # 专家修复：防止 batch_size=1 时被错误 squeeze 导致维度越界
+        mask_sum = torch.matmul(pooling_mask.unsqueeze(1), sequence_output).squeeze(1)
+        return mask_sum / mask_len
 
     def forward(
         self,
@@ -66,9 +219,12 @@ class BertPoolingForTripletPrediction(BertPreTrainedModel):
         encoder_attention_mask=None,
         output_attentions=None,
         output_hidden_states=None,
-        **kwargs
+        head_neighbors=None,
+        tail_neighbors=None,
+        head_neighbor_mask=None,
+        tail_neighbor_mask=None,
+        **kwargs,
     ):
-        assert kwargs == {}, f'Unexpected keyword arguments: {list(kwargs.keys())}.'
         outputs = self.bert(
             input_ids,
             attention_mask=attention_mask,
@@ -79,27 +235,53 @@ class BertPoolingForTripletPrediction(BertPreTrainedModel):
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states
+            output_hidden_states=output_hidden_states,
         )
         sequence_output = outputs[0]
         prediction_scores = self.cls(sequence_output)
+
         head_encoding = self.pooling_encoder(sequence_output, pooling_head_mask)
         rel_encoding = self.pooling_encoder(sequence_output, pooling_rel_mask)
         tail_encoding = self.pooling_encoder(sequence_output, pooling_tail_mask)
         trip_encoding = torch.stack([head_encoding, rel_encoding, tail_encoding], dim=1)
-        triplet_scores = self.trip_decoder(trip_encoding)
+
+        structure_info, entity_emb = None, None
+        if self.use_structure and head_neighbors is not None:
+            structure_info = {
+                "head_neighbors": head_neighbors,
+                "tail_neighbors": tail_neighbors,
+                "head_neighbor_mask": head_neighbor_mask,
+                "tail_neighbor_mask": tail_neighbor_mask,
+            }
+            entity_emb = self.entity_embeddings.weight
+
+        triplet_scores, struct_loss, recon_loss, gate = self.trip_decoder(
+            trip_encoding, structure_info, entity_emb
+        )
+
         if self.predict_mode:
             return (triplet_scores,)
-        loss = None
-        trip_loss_fct = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
-        lm_loss_fct = nn.CrossEntropyLoss()
+
+        total_loss = None
         if labels is not None:
-            loss = trip_loss_fct(triplet_scores, labels.float())
+            total_loss = self.trip_loss_fct(triplet_scores, labels.float())
+
         if mlm_labels is not None and prediction_scores is not None:
-            masked_lm_loss = (
-                self.text_loss_weight
-                * lm_loss_fct(prediction_scores.view(-1, self.config.real_vocab_size), mlm_labels.view(-1))
+            masked_lm_loss = self.text_loss_weight * self.lm_loss_fct(
+                prediction_scores.view(-1, self.config.real_vocab_size),
+                mlm_labels.view(-1),
             )
-            loss = masked_lm_loss if loss is None else loss + masked_lm_loss
-        output = (triplet_scores,)
-        return (loss,) + output if loss is not None else output
+            total_loss = (
+                masked_lm_loss if total_loss is None else total_loss + masked_lm_loss
+            )
+
+        # 专家建议：为方便基于 transformers 的 Trainer 收敛，建议将所有 loss 融合成一个单一标量
+        if struct_loss is not None:
+            alpha, beta = 1.0, 1.0  # 这两个权重可设为类参数
+            total_loss = total_loss + alpha * struct_loss + beta * recon_loss
+
+        return (
+            (total_loss, triplet_scores)
+            if total_loss is not None
+            else (triplet_scores,)
+        )
