@@ -332,7 +332,6 @@ class KGProcessor(DataProcessor):
         if isinstance(lines, str):
             lines = self._read_tsv(lines)
 
-        # 专家优化：用 Tuple Set 代替 String Set，Hash查找速度提升巨大
         triples_set = {(line[0], line[1], line[2]) for line in lines}
         examples = []
 
@@ -353,7 +352,6 @@ class KGProcessor(DataProcessor):
                 continue
             rnd = random.random()
 
-            # 替换 Head
             if not self.only_corrupt_entity or rnd <= 0.5:
                 for j in range(num_corr):
                     while True:
@@ -373,7 +371,6 @@ class KGProcessor(DataProcessor):
                         )
                     )
 
-            # 替换 Relation
             if not self.only_corrupt_entity:
                 for j in range(num_corr):
                     while True:
@@ -393,7 +390,6 @@ class KGProcessor(DataProcessor):
                         )
                     )
 
-            # 替换 Tail
             if not self.only_corrupt_entity or rnd > 0.5:
                 for j in range(num_corr):
                     while True:
@@ -452,7 +448,6 @@ class KGProcessor(DataProcessor):
         return (examples, features)
 
     def tokenize(self, example):
-        # 专家优化：彻底摒弃 copy.deepcopy，直接使用切片[:]进行列表极速浅拷贝
         tokens_a = self.ent2tokens[example.head][:]
         tokens_b = self.rel2tokens[example.rel][:]
         tokens_c = self.ent2tokens[example.tail][:]
@@ -603,8 +598,6 @@ class KGProcessor(DataProcessor):
                 train_dataset = []
                 for epoch in range(int(args.num_train_epochs) + 1):
                     _, train_features = self.get_train_examples(epoch, self.train_file)
-
-                    # 🚨 专家修复：将遗失的 neighbors 特征打包进 Dataset！
                     train_dataset.append(
                         DictDataset(
                             input_ids=torch.tensor(
@@ -685,7 +678,6 @@ class KGProcessor(DataProcessor):
         return (train_dataset, eval_dataset, predict_dataset)
 
     def build_entity_neighbors(self, max_neighbors=10):
-        """专家重构：完全基于稀疏图(Adjacency List)构建，内存占用降低至 1%"""
         neighbors_cache_file = os.path.join(
             self.data_cache_dir, f"entity_neighbors_{max_neighbors}.pt"
         )
@@ -697,7 +689,6 @@ class KGProcessor(DataProcessor):
             train_triples = self._read_tsv(os.path.join(self.data_dir, self.train_file))
             ent2idx = {ent: i for i, ent in enumerate(self.ent_list)}
 
-            # 1. 使用 defaultdict(set) 极速构建无向稀疏图
             adj_list = defaultdict(set)
             for head, rel, tail in train_triples:
                 if head in ent2idx and tail in ent2idx:
@@ -705,12 +696,10 @@ class KGProcessor(DataProcessor):
                     adj_list[h_idx].add(t_idx)
                     adj_list[t_idx].add(h_idx)
 
-            # 2. 转换为 Tensor 格式并 Padding
             self.entity_neighbors = {}
             for ent_idx in range(self.ent_size):
                 neighbors = list(adj_list.get(ent_idx, []))
 
-                # 随机采样或者截断，避免永远只取固定的前N个邻居
                 if len(neighbors) > max_neighbors:
                     neighbors = random.sample(neighbors, max_neighbors)
 

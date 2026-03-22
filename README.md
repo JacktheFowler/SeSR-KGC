@@ -1,79 +1,60 @@
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/joint-language-semantic-and-structure/link-prediction-on-wn18rr)](https://paperswithcode.com/sota/link-prediction-on-wn18rr?p=joint-language-semantic-and-structure)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/joint-language-semantic-and-structure/link-prediction-on-umls)](https://paperswithcode.com/sota/link-prediction-on-umls?p=joint-language-semantic-and-structure)
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/joint-language-semantic-and-structure/link-prediction-on-fb15k-237)](https://paperswithcode.com/sota/link-prediction-on-fb15k-237?p=joint-language-semantic-and-structure)
+# 模型结构
+model\
+├── bert_model.py\
+├── data_collator.py\
+├── data_processor.py\
+├── roberta_model.py\
+├── trainer.py\
+└── utils.py
 
-# Joint Language Semantic and Structure Embedding for Knowledge Graph Completion
+# 模块功能描述
 
-The source code repo for paper [Joint Language Semantic and Structure Embedding for Knowledge Graph Completion](https://arxiv.org/abs/2209.08721), COLING 2022.
+`bert_model.py`: BERT编码器与三元组预测
 
-## Setup Dataset and Dependencies
+重要函数或类：
+- `PoolingTripletDecoder`: 三元组解码器，处理池化后的表示
+  - `compute_structure_loss`: 结构感知损失计算模块
+- `BertPoolingForTripletPrediction`: 主模型，集成BERT编码、池化和三元组预测，支持训练/预测模式切换
+- `GatingFusion`: 门控融合单元
+- `StructureReconstructor`: 图重构单元
 
-Requires Python version 3.7 or above. Python 3.7.9 is tested.
+`data_collator.py`: 批处理数据整理
 
-Requires PyTorch version 1.8.1 or above with CUDA. PyTorch 1.8.1 with CUDA 11 is tested. Please refer to https://pytorch.org/get-started/locally/ for installing PyTorch.
+重要函数或类：
+- `PoolingCollator`: 将样本转换为模型输入格式，支持训练/预测模式，处理标签和span掩码
 
+`data_processor.py`: 数据加载与特征转换
+
+重要函数或类：
+- `DataProcessor`: 基础数据处理（读TSV、获取样本/标签）
+- `KGProcessor`: 核心处理器，管理实体/关系/类型约束，构建知识图谱结构，转换样本为模型特征
+  - `build_entity_neighbors` 为每个实体缓存邻接实体
+  - `convert_examples_to_features` 返回结构信息
+- `InputExample/InputFeatures`: 数据容器
+- `AlternateDataset`: 数据集包装器
+- `_truncate_seq_triple`: 三元组序列截断
+
+
+`trainer.py`: 训练与采样策略
+
+重要函数或类：
+- `GroupRandomSampler/GroupDistributedSampler`: 分组采样器（用于负采样或分布式训练）
+- `KGCTrainer`: 训练器，管理数据加载、模型训练、评估和预测流程
+  - `_compute_gated_loss`实现门控融合
+
+`utils.py`: 配置参数
+
+重要函数或类：
+- `ModelArguments/DataArguments`: 模型和数据超参数
+
+# 训练环境
+
+## 依赖
+python=3.7.8 环境依赖:
+```plaintext
+transformer=3.0.2
+tqdm
+numpy
 ```
-python -m pip install -r requirements.txt
-cd data
-bash prepare_data.sh
-cd ..
-```
-
-## Hardware Requirements
-
-8 GPUs required. 12GB GPU memory required for running BERT-Base (110M parameters) or RoBERTa-Base (123M parameters). 32GB GPU memory required for running BERT-Large (336M parameters) or RoBERTa-Large (353M parameters). We run our experiments on 8x NVIDIA V100 SXM2 32G GPUs. Internet connection required for downloading pre-trained language models and vocabulary files.
-
-## Scripts for Reproducing Results
-
-### Link Prediction
-
-```
-bash FB15k-237_bert_base.sh
-bash FB15k-237_bert_large.sh
-bash FB15k-237_roberta_base.sh
-bash FB15k-237_roberta_large.sh
-bash WN18RR_bert_base.sh
-bash WN18RR_bert_large.sh
-bash WN18RR_roberta_base.sh
-bash WN18RR_roberta_large.sh
-bash umls_bert_base.sh
-bash umls_bert_large.sh
-bash umls_roberta_base.sh
-bash umls_roberta_large.sh
-```
-
-### Triplet Classification
-
-```
-bash FB13_bert_base.sh
-bash FB13_bert_large.sh
-bash FB13_roberta_base.sh
-bash FB13_roberta_large.sh
-bash WN11_bert_base.sh
-bash WN11_bert_large.sh
-bash WN11_roberta_base.sh
-bash WN11_roberta_large.sh
-```
-
-## Experiment Results
-
-### Triplet Classification
-
-![](img/tripletclassfication.PNG)
-
-### Link Prediction
-
-![](img/linkprediction.PNG)
-
-## Citation
-
-```bibtex
-@inproceedings{shen-etal-2022-lass,
-    title = "Joint Language Semantic and Structure Embedding for Knowledge Graph Completion",
-    author = "Jianhao Shen and Chenguang Wang and Linyuan Gong and Dawn Song",
-    booktitle = "Proceedings of the 29th International Conference on Computational Linguistics",
-    year = "2022",
-    publisher = "International Committee on Computational Linguistics"
-}
-```
-
+## 硬件配置
+Bert-Base最少需求12GB显存，Bert_Large最少需求24GB显存，我们的实验使用8x NVIDIA V100 SXM2 32G GPUs, 开启分布式数据并行(DDP)并使用fp16精度加快速度。

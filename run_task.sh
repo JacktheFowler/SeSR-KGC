@@ -9,7 +9,6 @@ export MODEL_CACHE_DIR=cache
 mkdir -p ${EXP_ROOT}/cache_${EXP_NAME}
 mkdir -p ${EXP_ROOT}/out_${EXP_NAME}
 
-# 💡 专家优化 1：使用 DDP 启动，8卡性能线性飙升，彻底榨干机器算力！
 python -m torch.distributed.launch --nproc_per_node=8 run_triplet_classification.py \
     --do_train \
     --do_eval \

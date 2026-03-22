@@ -13,10 +13,8 @@ def numpy_seed(seed, *addl_seeds):
         return
 
     if len(addl_seeds) > 0:
-        # 使用确定性的字符串拼接和 MD5 哈希
         seed_str = f"{seed}_" + "_".join(str(s) for s in addl_seeds)
         md5_hash = hashlib.md5(seed_str.encode("utf-8")).hexdigest()
-        # 取前 7 个十六进制字符（确保在 32 位整数范围内，且足够随机）
         seed = int(md5_hash[:7], 16)
 
     state = np.random.get_state()
@@ -68,7 +66,6 @@ class ModelArguments:
         },
     )
 
-    # 结构信息与融合相关超参数
     structure_loss_weight: float = field(
         default=0.3, metadata={"help": "The weight of InfoNCE structure loss"}
     )
@@ -79,12 +76,10 @@ class ModelArguments:
         default=256,
         metadata={"help": "Hidden dimension for adaptive gating fusion module"},
     )
-    # 专家修复：解决命名冲突，改名为 gnn_mask_ratio
     gnn_mask_ratio: float = field(
         default=0.15,
         metadata={"help": "The ratio of masked structural edges/entities in GNN"},
     )
-    # 专家新增：对比学习的关键超参数
     temperature: float = field(
         default=0.07,
         metadata={
@@ -132,21 +127,16 @@ class DataArguments:
     max_span_length: int = field(
         default=5, metadata={"help": "Maximum length of a span of masked tokens."}
     )
-
-    # 专家修复：解决命名冲突，改名为 mlm_mask_ratio (与 DataCollator 的 mlm_probability 对应)
     mlm_mask_ratio: float = field(
         default=0.15,
         metadata={"help": "The ratio of text tokens to be masked in MLM task"},
     )
-
-    # 专家新增：防 OOM 与图感受野控制的超级核心参数
     max_neighbors: int = field(
         default=10,
         metadata={
             "help": "Maximum number of topological neighbors to retain per entity."
         },
     )
-
     group_shuffle: bool = field(
         default=False,
         metadata={

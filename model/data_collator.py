@@ -39,14 +39,11 @@ class PoolingCollator:
 
         if mask_left is not None and mask_right is not None:
             probability_matrix.fill_(0.0)
-            # 切片操作前确保不越界
             probability_matrix[:, mask_left:mask_right] = self.mlm_probability
 
         special_tokens_mask = self.tokenizer.get_special_tokens_mask(
             labels.tolist(), already_has_special_tokens=True
         )
-
-        # 专家修复：移除冗余的 torch.tensor 包裹，消除 Warning
         probability_matrix.masked_fill_(
             torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0
         )
@@ -103,7 +100,6 @@ class PoolingCollator:
         max_seq_length = examples[0]["input_ids"].size(0)
         batch_size = len(examples)
 
-        # 专家修复：预分配批次级别的张量矩阵，彻底消灭 For 循环里的列表拼接！
         attention_mask = torch.zeros((batch_size, max_seq_length), dtype=torch.long)
         token_type_ids = torch.zeros((batch_size, max_seq_length), dtype=torch.long)
         pooling_head_mask = torch.zeros((batch_size, max_seq_length), dtype=torch.long)
@@ -117,13 +113,11 @@ class PoolingCollator:
 
             pos = example["pos_indicator"]
 
-            # 使用切片直接赋值，告别 [0]*N + [1]*M + [0]*K
             attention_mask[i, : pos[-1].item() + 1] = 1
             pooling_head_mask[i, 1 : pos[1].item()] = 1
             pooling_rel_mask[i, pos[2].item() + 1 : pos[3].item()] = 1
             pooling_tail_mask[i, pos[4].item() + 1 : pos[5].item()] = 1
 
-        # 排除不需要直接 stack 的原始控制字段
         exclude_keys = {
             "pos_indicator",
             "corrupted_part",
@@ -132,10 +126,7 @@ class PoolingCollator:
         }
         input_keys = [k for k in examples[0].keys() if k not in exclude_keys]
 
-        # 优雅地构建 batch_data
         batch_data = {k: torch.stack([ex[k] for ex in examples]) for k in input_keys}
-
-        # 将我们极速生成的掩码并入 batch_data，保护原始 examples 字典不被污染
         batch_data.update(
             {
                 "attention_mask": attention_mask,
@@ -146,14 +137,11 @@ class PoolingCollator:
             }
         )
 
-        # 追加结构化图信息
         batch_data.update(self.prepare_structure_info(examples))
 
-        # 【可选提醒】：如果你在使用 MLM，请在这里对 batch_data["input_ids"] 调一次 self.span_mask
-        # 例如：
-        # if not self.predict_mode and self.mlm_probability > 0:
-        #     inputs, mlm_labels = self.span_mask(batch_data["input_ids"])
-        #     batch_data["input_ids"] = inputs
-        #     batch_data["mlm_labels"] = mlm_labels
+        if not self.predict_mode and self.mlm_probability > 0:
+            inputs, mlm_labels = self.span_mask(batch_data["input_ids"])
+            batch_data["input_ids"] = inputs
+            batch_data["mlm_labels"] = mlm_labels
 
         return self.process_label(batch_data)

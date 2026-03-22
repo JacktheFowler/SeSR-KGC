@@ -16,7 +16,6 @@ from transformers import (
 from model.bert_model import BertPoolingForTripletPrediction
 from model.data_collator import PoolingCollator
 from model.data_processor import DictDataset, KGProcessor
-from model.roberta_model import RobertaPoolingForTripletPrediction
 from model.trainer import KGCTrainer
 from model.utils import DataArguments, ModelArguments
 
@@ -79,9 +78,8 @@ def main():
 
     if model_args.pooling_model:
         logger.info("Using pooling model!")
-        if tokenizer.__class__.__name__.startswith("Roberta"):
-            tokenizer_cls = RobertaPoolingForTripletPrediction
-        elif tokenizer.__class__.__name__.startswith("Bert"):
+
+        if tokenizer.__class__.__name__.startswith("Bert"):
             tokenizer_cls = BertPoolingForTripletPrediction
         else:
             raise NotImplementedError()
@@ -94,8 +92,8 @@ def main():
             cache_dir=model_args.model_cache_dir,
             pos_weight=model_args.pos_weight,
             text_loss_weight=model_args.text_loss_weight,
-            use_structure=True,  # 专家提醒：确保你的模型开启了结构信息
-            num_entities=processor.ent_size,  # 传入实体数量用于构建 Embedding
+            use_structure=True,
+            num_entities=processor.ent_size,
         )
         data_collator = PoolingCollator(tokenizer)
     else:
@@ -114,9 +112,6 @@ def main():
         logger.info("Using group shuffle")
         trainer.use_group_shuffle(data_args.num_neg)
 
-    # ==========================
-    # Train & Eval Pipeline
-    # ==========================
     if training_args.do_train:
         model_path = (
             model_args.model_name_or_path
@@ -141,9 +136,6 @@ def main():
                     logger.info("  %s = %s", key, str(eval_output[key]))
                     writer.write("%s = %s\n" % (key, str(eval_output[key])))
 
-    # ==========================
-    # Link Prediction Pipeline
-    # ==========================
     if training_args.do_predict:
         prediction_begin_time = time.time()
         trainer.model.set_predict_mode()
@@ -173,9 +165,6 @@ def main():
 
             head, relation, tail = test_triple[0], test_triple[1], test_triple[2]
 
-            # ---------------------------
-            # 1. 预测头实体 (Predict Head)
-            # ---------------------------
             head_corrupt_list = [test_triple]
             tmp_entity_list = (
                 processor.rel2valid_head[relation]
@@ -214,17 +203,12 @@ def main():
 
             if trainer.is_world_master():
                 argsort1 = np.argsort(-preds)
-                rank1 = int(
-                    np.where(argsort1 == 0)[0][0]
-                )  # 找到真实三元组(索引0)的排名
+                rank1 = int(np.where(argsort1 == 0)[0][0])
                 ranks.append(rank1 + 1)
                 ranks_left.append(rank1 + 1)
                 if rank1 < 10:
                     top_ten_hit_count += 1
 
-            # ---------------------------
-            # 2. 预测尾实体 (Predict Tail)
-            # ---------------------------
             tail_corrupt_list = [test_triple]
             tmp_entity_list = (
                 processor.rel2valid_tail[relation]
@@ -281,12 +265,9 @@ def main():
                     hits[hits_level].append(1.0 if rank1 <= hits_level else 0.0)
                     hits[hits_level].append(1.0 if rank2 <= hits_level else 0.0)
 
-        # ==========================
-        # 打印最终评测指标
-        # ==========================
         if trainer.is_world_master():
             logger.info("============= FINAL RESULTS =============")
-            for i in [0, 2, 9]:  # Hits@1, Hits@3, Hits@10
+            for i in [0, 2, 9]:
                 logger.info(f"Hits left   @{i + 1}: {np.mean(hits_left[i]):.4f}")
                 logger.info(f"Hits right  @{i + 1}: {np.mean(hits_right[i]):.4f}")
                 logger.info(f"Hits        @{i + 1}: {np.mean(hits[i]):.4f}")
