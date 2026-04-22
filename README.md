@@ -57,4 +57,4 @@ tqdm
 numpy
 ```
 ## 硬件配置
-Bert-Base最少需求12GB显存，Bert_Large最少需求24GB显存，我们的实验使用8x NVIDIA V100 SXM2 32G GPUs, 开启分布式数据并行(DDP)并使用fp16精度加快速度。
+Bert-Base最少需求12GB显存，Bert_Large最少需求24GB显存，我们的实验使用2x NVIDIA RTX 4090 24G GPUs, 开启分布式数据并行(DDP)并使用fp16精度加快速度。
