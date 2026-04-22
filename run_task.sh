@@ -24,17 +24,17 @@ python -m torch.distributed.launch --nproc_per_node=8 run_triplet_classification
     --margin 7 \
     --no_mid \
     --max_seq_length 192 \
-    --per_device_train_batch_size 8 \
-    --per_device_eval_batch_size 32 \
+    --per_device_train_batch_size 512 \
+    --per_device_eval_batch_size 2048 \
     --learning_rate 3e-5 \
     --adam_epsilon 1e-6 \
-    --num_train_epochs 3 \
+    --num_train_epochs 5 \
     --warmup_steps 3000 \
     --weight_decay 0.01 \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 64 \
     --save_total_limit 5 \
     --save_steps 5000 \
-    --text_loss_weight 0.0 \
+    --text_loss_weight 0.2 \
     --test_ratio 1.0 \
     --overwrite_output_dir \
     --seed 42 \
