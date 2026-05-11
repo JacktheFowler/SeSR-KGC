@@ -580,17 +580,16 @@ class KGProcessor(DataProcessor):
 
     def get_dataset(self, args):
         train_dataset, eval_dataset, predict_dataset = None, None, None
+        file_suffix = f"{self.num_neg}_{self.max_seq_length}_{self.text_sep_token}.pt"
         train_data_file = os.path.join(
-            self.data_cache_dir,
-            f"train_dataset_{self.num_neg}_{self.max_seq_length}_{self.text_sep_token}.pt",
+            self.data_cache_dir, f"train_dataset_{file_suffix}"
         )
-        dev_data_file = (
-            f"dev_dataset_{self.num_neg}_{self.max_seq_length}_{self.text_sep_token}.pt"
+        dev_data_file = os.path.join(self.data_cache_dir, f"dev_dataset_{file_suffix}")
+        test_data_file = os.path.join(
+            self.data_cache_dir, f"test_dataset_{file_suffix}"
         )
-        test_data_file = f"test_dataset_{self.num_neg}_{self.max_seq_length}_{self.text_sep_token}.pt"
-        train_data_file = os.path.join(self.data_cache_dir, train_data_file)
-        dev_data_file = os.path.join(self.data_cache_dir, dev_data_file)
-        test_data_file = os.path.join(self.data_cache_dir, test_data_file)
+        if self.is_world_master and not os.path.exists(self.data_cache_dir):
+            os.makedirs(self.data_cache_dir, exist_ok=True)
         if args.do_train:
             if os.path.exists(train_data_file):
                 train_dataset = torch.load(train_data_file)
