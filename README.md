@@ -1,60 +1,53 @@
 # 模型结构
 model\
-├── bert_model.py\
-├── data_collator.py\
-├── data_processor.py\
-├── roberta_model.py\
-├── trainer.py\
-└── utils.py
+├── bert_model.py BERT  编码器与三元组预测\
+├── data_collator.py  批处理数据\
+├── data_processor.py 数据加载与特征转换\
+├── trainer.py  训练与采样策略\
+└── utils.py  配置参数
 
-# 模块功能描述
-
-`bert_model.py`: BERT编码器与三元组预测
-
-重要函数或类：
-- `PoolingTripletDecoder`: 三元组解码器，处理池化后的表示
-  - `compute_structure_loss`: 结构感知损失计算模块
-- `BertPoolingForTripletPrediction`: 主模型，集成BERT编码、池化和三元组预测，支持训练/预测模式切换
-- `GatingFusion`: 门控融合单元
-- `StructureReconstructor`: 图重构单元
-
-`data_collator.py`: 批处理数据整理
-
-重要函数或类：
-- `PoolingCollator`: 将样本转换为模型输入格式，支持训练/预测模式，处理标签和span掩码
-
-`data_processor.py`: 数据加载与特征转换
-
-重要函数或类：
-- `DataProcessor`: 基础数据处理（读TSV、获取样本/标签）
-- `KGProcessor`: 核心处理器，管理实体/关系/类型约束，构建知识图谱结构，转换样本为模型特征
-  - `build_entity_neighbors` 为每个实体缓存邻接实体
-  - `convert_examples_to_features` 返回结构信息
-- `InputExample/InputFeatures`: 数据容器
-- `AlternateDataset`: 数据集包装器
-- `_truncate_seq_triple`: 三元组序列截断
-
-
-`trainer.py`: 训练与采样策略
-
-重要函数或类：
-- `GroupRandomSampler/GroupDistributedSampler`: 分组采样器（用于负采样或分布式训练）
-- `KGCTrainer`: 训练器，管理数据加载、模型训练、评估和预测流程
-  - `_compute_gated_loss`实现门控融合
-
-`utils.py`: 配置参数
-
-重要函数或类：
-- `ModelArguments/DataArguments`: 模型和数据超参数
-
-# 训练环境
+# 训练
 
 ## 依赖
-python=3.7.8 环境依赖:
-```plaintext
-transformer=3.0.2
-tqdm
-numpy
+操作系统采用Ubuntu 20.04，windows下请使用wsl2并下载相应Ubuntu镜像。
+
+环境搭建和依赖下载
+```sh
+conda create -n ml python=3.7.8
+conda activate ml
+pip install -r requirement.txt
+```
+如需要fp16推理加速，需要安装apex
+```sh
+git clone https://github.com/NVIDIA/apex
+cd apex
+pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+```
+三元组分类，以FB13为例
+```sh
+chmod u+x FB13.sh
+./FB13.sh
+```
+链接推理,以FB15k-237为例
+```sh
+chmod u+x FB15k-237.sh
+./FB15k-237.sh
+```
+## 网络问题
+对于国内用户，请按照算力平台开启学术加速或使用镜像网站如(https://hf-mirror.com/)下载本地资源。
+```sh
+pip install -U huggingface_hub
+export HF_ENDPOINT=https://hf-mirror.com
+huggingface-cli download --resume-download bert-based-cache --local-dir bert-base
+```
+在`utils.py`中`model_name_or_path`修改为
+```sh
+@dataclass
+class ModelArguments:
+    model_name_or_path: str = field(
+        default="./bert-base",  # 注意这里的 ./ 代表当前运行路径
+        metadata={"help": "Path to pretrained model"}
+    )
 ```
 ## 硬件配置
 Bert-Base最少需求12GB显存，Bert_Large最少需求24GB显存，我们的实验使用2x NVIDIA RTX 4090 24G GPUs, 开启分布式数据并行(DDP)并使用fp16精度加快速度。

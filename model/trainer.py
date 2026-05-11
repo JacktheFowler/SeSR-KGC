@@ -16,6 +16,7 @@ from transformers.trainer_utils import EvalPrediction, PredictionOutput
 logger = logging.getLogger(__name__)
 
 
+# 分组采样器（用于负采样或分布式训练）
 class GroupRandomSampler(Sampler):
     def __init__(self, data_source, group):
         self.data_source = data_source
@@ -36,6 +37,7 @@ class GroupRandomSampler(Sampler):
         return self.num_samples
 
 
+# 用于多卡数据采样
 class GroupDistributedSampler(DistributedSampler):
     def __init__(
         self, dataset, group_size, num_replicas=None, rank=None, shuffle=True, seed=0
@@ -93,6 +95,7 @@ class GroupDistributedSampler(DistributedSampler):
         self.epoch = epoch
 
 
+# 训练器，管理数据加载、模型训练、评估和预测流程
 class KGCTrainer(Trainer):
     def __init__(
         self, *args, structure_loss_weight=0.3, reconstruction_loss_weight=0.2, **kwargs
@@ -102,6 +105,7 @@ class KGCTrainer(Trainer):
         self.w_str = structure_loss_weight
         self.w_rec = reconstruction_loss_weight
 
+    # 实现门控融合
     def _compute_gated_loss(self, semantic_loss, structure_loss=None, recon_loss=None):
         total_loss = self.w_sem * semantic_loss
         if structure_loss is not None:
@@ -207,14 +211,19 @@ class KGCTrainer(Trainer):
     def _get_group_sampler(self) -> Optional[torch.utils.data.sampler.Sampler]:
         if isinstance(self.train_dataset, torch.utils.data.IterableDataset):
             return None
-        else:
-            return (
-                GroupRandomSampler(self.train_dataset, self.num_neg * 3 + 1)
-                if self.args.local_rank == -1
-                else GroupDistributedSampler(
-                    self.train_dataset, group_size=self.num_neg * 3 + 1
-                )
+
+        group_size = self.num_neg * 3 + 1
+        num_samples = (len(self.train_dataset) // group_size) * group_size
+        if len(self.train_dataset) % group_size != 0:
+            print(
+                f"Warning: Truncating dataset from {len(self.train_dataset)} to {num_samples} to fit group_size {group_size}"
             )
+            self.train_dataset = self.train_dataset[:num_samples]
+        return (
+            GroupRandomSampler(self.train_dataset, group_size)
+            if self.args.local_rank == -1
+            else GroupDistributedSampler(self.train_dataset, group_size=group_size)
+        )
 
     def _get_train_sampler(self) -> Optional[torch.utils.data.sampler.Sampler]:
         if isinstance(self.train_dataset, torch.utils.data.IterableDataset):

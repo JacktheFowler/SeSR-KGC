@@ -27,6 +27,7 @@ class DictDataset(Dataset):
         return self.data_len
 
 
+# 数据集包装器
 class AlternateDataset(Dataset):
     def __init__(self, *args):
         self.datasets = args
@@ -38,11 +39,14 @@ class AlternateDataset(Dataset):
         return self.data_len
 
     def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self[i] for i in range(*index.indices(len(self.counters)))]
         res = self.datasets[self.counters[index] % self.num_alternatives][index]
         self.counters[index] += 1
         return res
 
 
+# 数据容器
 @dataclass
 class InputExample:
     guid: List[int]
@@ -55,6 +59,7 @@ class InputExample:
     label: str
 
 
+# 数据容器
 @dataclass
 class InputFeatures:
     input_ids: List[int]
@@ -69,6 +74,7 @@ class InputFeatures:
     )
 
 
+# 基础数据处理（读TSV、获取样本/标签）
 class DataProcessor(object):
     def get_train_examples(self, data_dir):
         raise NotImplementedError()
@@ -95,6 +101,7 @@ class DataProcessor(object):
             return lines
 
 
+# 核心处理器，管理实体/关系/类型约束，构建知识图谱结构，转换样本为模型特征
 class KGProcessor(DataProcessor):
     def __init__(self, data_args, tokenizer, is_world_master, must_load=False):
         self.data_dir = data_args.data_dir
@@ -676,6 +683,7 @@ class KGProcessor(DataProcessor):
                     torch.save(predict_dataset, test_data_file)
         return (train_dataset, eval_dataset, predict_dataset)
 
+    # 缓存邻接实体
     def build_entity_neighbors(self, max_neighbors=10):
         neighbors_cache_file = os.path.join(
             self.data_cache_dir, f"entity_neighbors_{max_neighbors}.pt"
@@ -717,6 +725,7 @@ class KGProcessor(DataProcessor):
             logger.info("entity neighbors built efficiently")
 
 
+# 三元组序列截断
 def _truncate_seq_triple(tokens_a, tokens_b, tokens_c, max_length):
     total_length = len(tokens_a) + len(tokens_b) + len(tokens_c)
     if total_length <= max_length:

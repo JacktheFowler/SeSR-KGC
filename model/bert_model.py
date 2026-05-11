@@ -4,7 +4,9 @@ import torch.nn.functional as F
 from transformers.modeling_bert import BertModel, BertOnlyMLMHead, BertPreTrainedModel
 
 
+# 门控融合单元
 class GatingFusion(nn.Module):
+    # 使用具有隐藏层的双层神经网络作为门控自适应融合单元
     def __init__(self, hidden_dim):
         super().__init__()
         self.gate = nn.Sequential(
@@ -19,6 +21,7 @@ class GatingFusion(nn.Module):
         return self.gate(fused).squeeze(-1)
 
 
+# 图谱重构单元
 class StructureReconstructor(nn.Module):
     def __init__(self, hidden_dim):
         super().__init__()
@@ -35,6 +38,7 @@ class StructureReconstructor(nn.Module):
         return (head_loss + tail_loss) * 0.5
 
 
+# 三元组解码器，处理池化后的表示
 class PoolingTripletDecoder(nn.Module):
     def __init__(self, margin, hidden_dim=None, use_structure=False):
         super().__init__()
@@ -47,6 +51,7 @@ class PoolingTripletDecoder(nn.Module):
             self.structure_proj = nn.Linear(hidden_dim, hidden_dim)
             self.temp = 0.07
 
+    # 结构感知损失计算模块
     def compute_structure_loss(
         self,
         head,
@@ -118,6 +123,7 @@ class PoolingTripletDecoder(nn.Module):
         return gated_z, struct_loss, recon_loss, gate
 
 
+# 集成BERT编码、池化和三元组预测，支持训练/预测模式切换
 class BertPoolingForTripletPrediction(BertPreTrainedModel):
     def __init__(
         self,

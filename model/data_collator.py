@@ -1,6 +1,7 @@
 import torch
 
 
+# 将样本转换为模型输入格式，支持训练/预测模式，处理标签和span掩码
 class PoolingCollator:
     def __init__(self, tokenizer, mlm_probability=0.15):
         self.predict_mode = False
@@ -34,43 +35,52 @@ class PoolingCollator:
         if self.tokenizer.mask_token is None:
             raise ValueError("Tokenizer without mask token.")
 
+        device = inputs.device
         labels = inputs.clone()
-        probability_matrix = torch.full(labels.shape, self.mlm_probability)
+        probability_matrix = torch.full(
+            labels.shape, self.mlm_probability, device=device
+        )
 
         if mask_left is not None and mask_right is not None:
             probability_matrix.fill_(0.0)
             probability_matrix[:, mask_left:mask_right] = self.mlm_probability
 
-        special_tokens_mask = self.tokenizer.get_special_tokens_mask(
-            labels.tolist(), already_has_special_tokens=True
+        special_tokens_mask = (labels == self.tokenizer.cls_token_id) | (
+            labels == self.tokenizer.sep_token_id
         )
-        probability_matrix.masked_fill_(
-            torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0
-        )
+        if (
+            hasattr(self.tokenizer, "mask_token_id")
+            and self.tokenizer.mask_token_id is not None
+        ):
+            special_tokens_mask |= labels == self.tokenizer.mask_token_id
+
+        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
         out_of_word_mask = labels >= len(self.tokenizer)
         probability_matrix.masked_fill_(out_of_word_mask, value=0.0)
-
         if getattr(self.tokenizer, "pad_token_id", None) is not None:
             padding_mask = labels.eq(self.tokenizer.pad_token_id)
             probability_matrix.masked_fill_(padding_mask, value=0.0)
-
         masked_indices = torch.bernoulli(probability_matrix).bool()
         labels[~masked_indices] = -100
 
+        # 80% 的概率替换为 [MASK]
         indices_replaced = (
-            torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
+            torch.bernoulli(torch.full(labels.shape, 0.8, device=device)).bool()
+            & masked_indices
         )
         inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(
             self.tokenizer.mask_token
         )
 
+        # 10% 的概率替换为随机词 (剩下的 10% 保持原样)
         indices_random = (
-            torch.bernoulli(torch.full(labels.shape, 0.5)).bool()
+            torch.bernoulli(torch.full(labels.shape, 0.5, device=device)).bool()
             & masked_indices
             & ~indices_replaced
         )
+
         random_words = torch.randint(
-            len(self.tokenizer), labels.shape, dtype=torch.long
+            len(self.tokenizer), labels.shape, dtype=torch.long, device=device
         )
         inputs[indices_random] = random_words[indices_random]
 

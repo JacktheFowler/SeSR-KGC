@@ -25,6 +25,7 @@ def numpy_seed(seed, *addl_seeds):
         np.random.set_state(state)
 
 
+# 模型和数据超参数
 @dataclass
 class ModelArguments:
     model_name_or_path: str = field(
