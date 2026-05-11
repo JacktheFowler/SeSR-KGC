@@ -34,7 +34,7 @@ chmod u+x FB15k-237.sh
 ./FB15k-237.sh
 ```
 ## 网络问题
-对于国内用户，请按照算力平台开启学术加速或使用镜像网站如(https://hf-mirror.com/)下载本地资源。
+对于国内用户，请按照算力平台开启学术加速或使用镜像网站如(https://hf-mirror.com)下载本地资源。
 ```sh
 pip install -U huggingface_hub
 export HF_ENDPOINT=https://hf-mirror.com
